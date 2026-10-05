@@ -7,8 +7,8 @@ export const SKY = {
   zenith: new THREE.Color().setRGB(0.17, 0.33, 0.62),
   horizon: new THREE.Color().setRGB(0.68, 0.76, 0.85),
   ground: new THREE.Color().setRGB(0.3, 0.28, 0.25),
-  nightZenith: new THREE.Color().setRGB(0.03, 0.045, 0.11),
-  nightHorizon: new THREE.Color().setRGB(0.22, 0.14, 0.11), // sodium-and-LED glow over the city
+  nightZenith: new THREE.Color().setRGB(0.04, 0.07, 0.19),
+  nightHorizon: new THREE.Color().setRGB(0.24, 0.32, 0.54),
 };
 
 const VERT = /* glsl */ `
@@ -57,11 +57,9 @@ void main() {
     day = mix(day, cloud, cover * 0.92);
   }
 
-  // night: dark gradient, glow near the horizon, stars
-  vec3 night = mix(uNightHorizon, uNightZenith, pow(h, 0.35));
-  vec2 sp = d.xz / (abs(d.y) + 0.35) * 220.0;
-  float star = step(0.9975, hash(floor(sp))) * smoothstep(0.1, 0.5, d.y);
-  night += vec3(0.9, 0.93, 1.0) * star * 1.6 * uSunDisc;
+  // blue hour: deep blue above, a warm line on the horizon, no stars
+  vec3 night = mix(uNightHorizon, uNightZenith, pow(h, 0.45));
+  night += vec3(1.0, 0.52, 0.32) * pow(1.0 - smoothstep(0.0, 0.22, h), 2.2) * 0.28;
 
   vec3 col = mix(day, night, uNight);
   // below the horizon: ground bounce colour (matters for the environment map)

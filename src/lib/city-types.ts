@@ -60,6 +60,11 @@ export type MessageView = {
   at: number;
 };
 
+export type InviteView = {
+  id: string;
+  code: string;
+};
+
 export type CityView = {
   id: string;
   name: string;
@@ -80,6 +85,7 @@ export type SceneRoom = {
 
 export type SceneBuilding = {
   rooms: SceneRoom[];
+  key?: string | null;
 };
 
 export type SceneBeam = {

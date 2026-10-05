@@ -571,6 +571,7 @@ export class Props {
     group.add(near, far);
     const by = new Map(), roosts = [];
     for (let i = 0; i < props.length; i += 6) {
+      if (props[i] === PROP.PARKED) continue;
       if (props[i] === PROP.TREE) roosts.push(props[i + 3], ground(props[i + 3], props[i + 4]) + this.trees[props[i + 1] % this.trees.length].height * props[i + 5] * 0.72, props[i + 4]);
       // one instanced mesh per kind and model; parked cars share a model per vehicle type (their variant also carries the colour)
       const key = props[i] * 16 + (props[i] === PROP.PARKED ? props[i + 1] & 3 : props[i] === PROP.TREE || props[i] === PROP.POLE || this.furniture[props[i]] ? props[i + 1] : 0);

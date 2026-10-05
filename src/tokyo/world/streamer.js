@@ -155,27 +155,31 @@ export class Streamer {
 
     const ground = new THREE.Mesh(geometry(terrain, [['position', 3], ['normal', 3]]), this.materials.terrain);
     ground.receiveShadow = true;
+    ground.userData.ground = true;
     group.add(ground);
 
     if (roads.position.length) {
       const m = new THREE.Mesh(geometry(roads, [['position', 3], ['normal', 3], ['color', 3], ['aLayer', 1]]), this.materials.road);
       m.receiveShadow = true;
+      m.userData.ground = true;
       group.add(m);
     }
     if (paint.position.length) {
       const m = new THREE.Mesh(geometry(paint, [['position', 3], ['normal', 3], ['color', 3], ['aLayer', 1]]), this.materials.paint);
       m.receiveShadow = true;
+      m.userData.ground = true;
       group.add(m);
     }
     if (decals.position.length) {
       const m = new THREE.Mesh(geometry(decals, [['position', 3], ['normal', 3], ['uv', 2]]), this.props.mats.decal);
       m.receiveShadow = true;
       m.renderOrder = 2;
+      m.userData.ground = true;
       group.add(m);
     }
     let trees = null;
     if (props.length || wires.length) {
-      trees = this.props.build(props, wires, this.surface);
+      trees = this.props.build(props, new Float32Array(0), this.surface);
       trees.near.visible = false; // update() picks the level of detail on the next frame
       group.add(trees.group);
     }
@@ -213,6 +217,8 @@ export class Streamer {
       m.castShadow = m.receiveShadow = true;
       m.material.onBeforeCompile = (shader) => { shader.uniforms.uLampOn = { value: 0 }; shader.uniforms.uLampMap = shared.uLampMap; }; // (no lamp light up here: see lamplight.js)
       m.userData.own = [m.material]; // freed with the tile
+      m.userData.roofPhoto = true;
+      m.userData.tile = msg.key;
       atlases.push(this.atlas(msg.key, t, this.available.get(msg.key).atlas, ROOFS_FULL, (map) => {
         const first = !m.material.map;
         m.material.map = map; m.material.color.set(0xffffff);

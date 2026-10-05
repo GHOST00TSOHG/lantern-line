@@ -6,6 +6,7 @@ type Api = {
   focus: (building: number, slot?: number) => void;
   street: () => void;
   setWork: (jobs: { working: boolean; slot?: number }[]) => void;
+  setLines: (people: { key: string }[]) => void;
   destroy: () => void;
 };
 
@@ -29,7 +30,6 @@ export function TokyoCity({
   const modelRef = useRef(model);
   const onWindowRef = useRef(onWindow);
   const [mode, setMode] = useState<"tokyo" | "fallback">("tokyo");
-  const [zoomed, setZoomed] = useState(false);
   const [note, setNote] = useState("");
   modelRef.current = model;
   onWindowRef.current = onWindow;
@@ -38,7 +38,6 @@ export function TokyoCity({
     const node = host.current as (HTMLDivElement & { __onWindow?: (pick: WindowPick) => void }) | null;
     if (!node) return;
     node.__onWindow = (pick: WindowPick) => {
-      setZoomed(true);
       onWindowRef.current?.(pick);
     };
     const gate = { dead: false };
@@ -60,6 +59,7 @@ export function TokyoCity({
           const room = building.rooms.find((item) => item.working);
           return { working: Boolean(room), slot: room?.slot ?? 0 };
         }));
+        mounted.setLines(current.buildings.flatMap((building) => (building.key ? [{ key: building.key }] : [])));
       })
       .catch((err) => {
         if (gate.dead) return;
@@ -81,9 +81,12 @@ export function TokyoCity({
   }, [model]);
 
   useEffect(() => {
+    api.current?.setLines(model.buildings.flatMap((building) => (building.key ? [{ key: building.key }] : [])));
+  }, [model]);
+
+  useEffect(() => {
     if (!model.selected) return;
     api.current?.focus(model.selected.building, model.selected.slot);
-    setZoomed(true);
   }, [model.selected]);
 
   const selectedHouse = model.selected ? model.buildings[model.selected.building] : null;
@@ -110,6 +113,7 @@ export function TokyoCity({
   return (
     <div className="absolute inset-0">
       <div ref={host} className="absolute inset-0" />
+      {shownHouse ? (
       <aside
         className={
           "absolute top-20 right-4 z-20 w-56 rounded-xl border bg-panel/90 p-3 backdrop-blur-sm " +
@@ -117,23 +121,12 @@ export function TokyoCity({
         }
       >
         <p className="text-xs tracking-wide text-muted">{working ? "Working window" : "Window"}</p>
-        <p className="mt-1 font-display text-lg leading-tight">{shownHouse || "No house yet"}</p>
+        <p className="mt-1 font-display text-lg leading-tight">{shownHouse}</p>
         <p className="mt-1 text-sm text-muted">
-          {botName ? `${botName}. ` : ""}Click a window. That room locks to you.
+          {botName ? `${botName}. ` : ""}Click a window to open the room. Click another building to switch.
         </p>
-        {zoomed ? (
-          <button
-            type="button"
-            className="mt-3 h-11 w-full rounded-md border border-line text-sm"
-            onClick={() => {
-              api.current?.street();
-              setZoomed(false);
-            }}
-          >
-            Back to the street
-          </button>
-        ) : null}
       </aside>
+      ) : null}
     </div>
   );
 }

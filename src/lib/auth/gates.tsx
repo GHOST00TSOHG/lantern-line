@@ -68,10 +68,10 @@ export function SignInButtons() {
     <div className="flex w-full max-w-sm flex-col gap-2">
       <button
         type="button"
-        onClick={() => signIn("grok-x", { callbackURL: "/" })}
+        onClick={() => signIn("grok-google", { callbackURL: "/" })}
         className="w-full cursor-pointer rounded-md border border-neutral-300 px-4 py-2 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
       >
-        Authorize GrokBot
+        Continue with Google
       </button>
     </div>
   );

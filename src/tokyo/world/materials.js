@@ -21,7 +21,8 @@ export const shared = {
   uCityGlass: { value: 1 },
   // how blue the lights of the city are at night (0: mostly warm, 1: a cool blue city)
   uNightBlue: { value: 0.55 },
-  uWet: { value: 1 },
+  uWet: { value: 0 },
+  uSnow: { value: 1 },
   uBots: { value: Array.from({ length: 5 }, () => new THREE.Vector4()) },
   // lamp light on the ground (src/world/lamplight.js): on at night, the light map, where it lies
   uLampOn: { value: 0 }, uLampMap: { value: null }, uLampRect: { value: new THREE.Vector4(0, 0, 1, 0) },
@@ -63,6 +64,7 @@ uniform float uTime;
 uniform vec2 uWindowLife;
 uniform float uCityGlass;
 uniform float uNightBlue;
+uniform float uSnow;
 uniform vec4 uBots[5];
 uniform vec3 uSunDir;
 uniform vec3 uSunGlint;
@@ -367,6 +369,10 @@ const PHOTO_MAIN = /* glsl */ `
   diffuseColor.rgb = mix(diffuseColor.rgb, photo * 1.12, k);
   gRough = mix(gRough, 0.85, k);
   gMetal *= 1.0 - k;
+  float cap = smoothstep(0.62, 0.92, normalize(vWNrm).y);
+  cap *= 0.72 + 0.28 * hash12(floor(vWPos.xz * 0.4));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.85, 0.93), cap * uSnow);
+  gRough = mix(gRough, 0.78, cap * uSnow);
 }
 `;
 
@@ -377,7 +383,7 @@ function facadeMaterial(tex) {
     Object.assign(shader.uniforms, {
       uLampOn: { value: 0 }, uLampMap: shared.uLampMap, // (no lamp light on buildings; the sampler still needs its texture)
       uPhoto: m.userData.photo, uPhotoOn: m.userData.photoOn, uPhotoRange: shared.uPhotoRange, uPhotoMix: shared.uPhotoMix,
-      uNight: shared.uNight, uTime: shared.uTime, uWindowLife: shared.uWindowLife, uCityGlass: shared.uCityGlass, uNightBlue: shared.uNightBlue, uBots: shared.uBots, uSunDir: shared.uSunDir, uSunGlint: shared.uSunGlint, uGlintOn: shared.uGlintOn, uWallAlb: { value: tex.wall.albedo }, uWallNor: { value: tex.wall.normal },
+      uNight: shared.uNight, uTime: shared.uTime, uWindowLife: shared.uWindowLife, uCityGlass: shared.uCityGlass, uNightBlue: shared.uNightBlue, uSnow: shared.uSnow, uBots: shared.uBots, uSunDir: shared.uSunDir, uSunGlint: shared.uSunGlint, uGlintOn: shared.uGlintOn, uWallAlb: { value: tex.wall.albedo }, uWallNor: { value: tex.wall.normal },
       uWallScale: { value: tex.wall.scales }, uWallDetail: { value: tex.wall.details },
     });
     shader.vertexShader = shader.vertexShader
@@ -394,7 +400,7 @@ function facadeMaterial(tex) {
       .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\nreflectedLight.directSpecular += gGlint * smoothstep(0.0, 0.002, dot(reflectedLight.directDiffuse, vec3(0.333)));')
       .replace('#include <opaque_fragment>', '#include <opaque_fragment>\ngl_FragColor.a = 1.0 - 0.95 * gPane;');
   };
-  m.customProgramCacheKey = () => 'facade-v27';
+  m.customProgramCacheKey = () => 'facade-v28';
   return m;
 }
 
@@ -411,6 +417,7 @@ uniform vec4 uOrthoRect;
 uniform float uOrthoOn;
 uniform float uDark;
 uniform float uWet;
+uniform float uSnow;
 uniform float uTime;
 varying float vLayer;
 varying vec3 vWPos;
@@ -512,6 +519,12 @@ const GROUND_MAIN = /* glsl */ `
     }
     diffuseColor.rgb += vec3(0.35, 0.55, 0.7) * pow(w2, 4.0) * 0.25;
   }
+  if (!water) {
+    float cap = smoothstep(0.55, 0.9, gN.y);
+    cap *= 0.7 + 0.3 * vnoise(vWPos.xz * 0.32);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.86, 0.93), cap * uSnow);
+    gRough = mix(gRough, 0.8, cap * uSnow);
+  }
 }
 `;
 
@@ -522,7 +535,7 @@ function groundMaterial(tex, { fixedLayer = -1, ...params } = {}) {
       uGroundAlb: { value: tex.ground.albedo }, uGroundNor: { value: tex.ground.normal },
       uGroundScale: { value: tex.ground.scales }, uFixedLayer: { value: fixedLayer },
       uOrtho: shared.uOrtho, uOrthoRect: shared.uOrthoRect, uOrthoOn: shared.uOrthoOn,
-      uDark: shared.uDark, uWet: shared.uWet, uTime: shared.uTime,
+      uDark: shared.uDark, uWet: shared.uWet, uSnow: shared.uSnow, uTime: shared.uTime,
       uLampOn: shared.uLampOn, uLampMap: shared.uLampMap, uLampRect: shared.uLampRect,
     });
     shader.vertexShader = shader.vertexShader
@@ -534,7 +547,7 @@ function groundMaterial(tex, { fixedLayer = -1, ...params } = {}) {
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = gRough;')
       .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + APPLY_NORMAL);
   };
-  m.customProgramCacheKey = () => 'ground-v12';
+  m.customProgramCacheKey = () => 'ground-v13';
   return m;
 }
 

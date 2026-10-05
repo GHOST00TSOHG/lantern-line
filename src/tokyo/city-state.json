@@ -1,0 +1,9 @@
+{
+  "savedAt": "2026-10-04T21:05:00-04:00",
+  "look": "blue-hour",
+  "snow": true,
+  "rain": false,
+  "cars": false,
+  "wetStreets": false,
+  "standingPowerLines": false
+}

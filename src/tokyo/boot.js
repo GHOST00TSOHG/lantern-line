@@ -1,6 +1,6 @@
 // @ts-nocheck
 // Mounts the procedural Tokyo client (jeantimex/tokyo, MIT) inside a page element.
-// Night is locked on. Bot houses are five real buildings; their service lines glow RGB while a bot works.
+// Night is locked on. Power lines appear only between two people on the same project.
 import * as THREE from "three";
 import { MapControls } from "three/addons/controls/MapControls.js";
 import { makeProjection } from "./shared/geo.js";
@@ -12,15 +12,13 @@ import { Signs } from "./world/signs.js";
 import { buildRailways } from "./world/rails.js";
 import { buildFlyovers } from "./world/flyovers.js";
 import { loadStreetLife } from "./world/streetlife.js";
-import { Traffic } from "./world/traffic.js";
 import { buildStructures } from "./world/structures.js";
 import { loadOrtho } from "./world/ortho.js";
 import { Environment } from "./world/environment.js";
-import { createBirds } from "./world/birds.js";
-import { loadBackdrop } from "./world/backdrop.js";
 import { LampLight, installLampLight, LAMP_LAYER, lampMaterial } from "./world/lamplight.js";
-import { createRain } from "./world/rain.js";
+import { createSnow } from "./world/snow.js";
 import { buildInterior, disposeInterior } from "./world/interior.js";
+import { buildingBox, createSink } from "./world/sink.js";
 
 installLampLight();
 
@@ -213,7 +211,7 @@ function addScramble(scene, ground) {
 
 export async function mountTokyo(container, gate) {
   if (gate?.dead) {
-    return { focus() {}, street() {}, setWork() {}, destroy() {} };
+    return { focus() {}, street() {}, setWork() {}, setLines() {}, destroy() {} };
   }
   const token = Symbol("tokyo");
   container.__tokyo = token;
@@ -290,7 +288,7 @@ export async function mountTokyo(container, gate) {
   }
   function abandon() {
     shutdown();
-    return { focus() {}, street() {}, setWork() {}, destroy() {} };
+    return { focus() {}, street() {}, setWork() {}, setLines() {}, destroy() {} };
   }
 
   const env = new Environment(scene, renderer);
@@ -348,17 +346,9 @@ export async function mountTokyo(container, gate) {
     plain.position.set((b.minX + b.maxX) / 2, manifest.terrain.min - 1, (b.minZ + b.maxZ) / 2);
     plain.receiveShadow = true;
     scene.add(plain);
-    if (manifest.backdrop) {
-      plain.position.y = -0.5;
-      plain.material.color.set(0x163044);
-      loadBackdrop(`tiles/${AREA}`, `ortho/${AREA}/backdrop`, manifest, proj, renderer).then((mesh) => scene.add(mesh));
-    }
   }
-  const birds = createBirds();
-  scene.add(birds);
   const lampLight = new LampLight(renderer);
-  // The volumetric atmosphere pass stays off: it blanks the star sky and stalls the picture.
-  // Night is the engine's own sky, window lights and moonlight.
+  // Night is the blue-hour sky, window lights and moonlight.
   loadOrtho(`ortho/${AREA}`, proj, manifest.bounds, renderer).then((ok) => {
     shared.uOrthoOn.value = ok ? 1 : 0;
   });
@@ -368,20 +358,11 @@ export async function mountTokyo(container, gate) {
   scene.add(await buildFlyovers(`tiles/${AREA}/${manifest.roads}`, (x, z) => streamer.ground(x, z)));
   if (!alive()) return abandon();
   if (manifest.structures) scene.add(await buildStructures(`tiles/${AREA}/${manifest.structures}`, (x, z) => streamer.ground(x, z)));
-  const roadData = await (await fetch(`tiles/${AREA}/${manifest.roads}`)).json();
-  if (!alive()) return abandon();
   const life = await loadStreetLife(`tiles/${AREA}`, manifest);
   if (!alive()) return abandon();
-  const roads = roadData.edges?.length ? roadData : life.roads;
-  const traffic = roads.edges?.length ? new Traffic(roads, streamer.surface) : null;
-  if (traffic) {
-    traffic.headlights = 18;
-    traffic.count = 420;
-    scene.add(traffic.group);
-  }
   addScramble(scene, (x, z) => streamer.ground(x, z));
-  const rain = createRain(manifest.bounds);
-  scene.add(rain.lines);
+  const snow = createSnow(camera);
+  scene.add(snow.mesh);
   let streetTrees = null;
   if (life.props) {
     streetTrees = props.build(life.props, new Float32Array(0), (x, z) => streamer.ground(x, z));
@@ -406,142 +387,73 @@ export async function mountTokyo(container, gate) {
   scene.add(linkGroup);
   const cableMat = cableMaterial();
   const glows = [];
-  const markers = [];
   let anchors = [];
-  let service = null;
-  let serviceAt = -1;
-  let serviceTries = 0;
+  let occupants = [];
+  let lineKey = "";
 
-  function buildLinks(list) {
+  function clearLinks() {
+    linkGroup.traverse((obj) => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material && obj.material !== cableMat) obj.material.dispose();
+    });
     linkGroup.clear();
     glows.length = 0;
-    markers.length = 0;
-    const ordered = list.map((building, index) => ({ building, index }));
-    ordered.sort((p, q) => p.building.cx - q.building.cx || p.building.cz - q.building.cz);
-    const heads = ordered.map(({ building }) => wallToward(building, building.cx, building.maxZb + 12));
-    const curves = [];
-    heads.forEach((head) => {
-      const entry = head.clone();
-      entry.y -= 3.8;
-      curves.push([head, entry]);
-      const drop = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([head, entry]),
-        new THREE.LineBasicMaterial({ color: 0xffd28a }),
-      );
-      drop.frustumCulled = false;
-      linkGroup.add(drop);
-    });
-    for (let i = 0; i < heads.length - 1; i += 1) curves.push(sagSamples(heads[i], heads[i + 1]));
-    linkGroup.add(new THREE.Mesh(cableGeometry(curves, 0.12), cableMat));
-    for (let i = 0; i < heads.length - 1; i += 1) {
-      const samples = sagSamples(heads[i], heads[i + 1]);
-      const glowMat = new THREE.MeshBasicMaterial({
-        color: 0xff3355,
-        transparent: true,
-        opacity: 0.92,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false,
-      });
-      const glow = new THREE.Mesh(cableGeometry([samples], 0.42), glowMat);
-      glow.visible = false;
-      linkGroup.add(glow);
-      const pulse = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 8), glowMat.clone());
-      pulse.visible = false;
-      linkGroup.add(pulse);
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(samples), new THREE.LineBasicMaterial({ color: 0xffd28a }));
-      line.frustumCulled = false;
-      linkGroup.add(line);
-      glows.push({ glow, pulse, line, samples, a: ordered[i].index, b: ordered[i + 1].index });
-    }
-    ordered.forEach(({ building, index }, order) => {
-      const mark = new THREE.Mesh(
-        new THREE.PlaneGeometry(2.6, 3.6),
-        new THREE.MeshBasicMaterial({
-          color: 0xffd7a8,
-          transparent: true,
-          opacity: 0.9,
-          toneMapped: false,
-          side: THREE.DoubleSide,
-        }),
-      );
-      mark.visible = false;
-      mark.position.copy(heads[order]);
-      mark.position.y -= 0.4;
-      linkGroup.add(mark);
-      markers[index] = mark;
-    });
   }
 
-  function rebuildService() {
-    const buildings = catalog(scene);
-    if (buildings.length < 8) return;
-    const cell = 48;
-    const grid = new Map();
-    for (const building of buildings) {
-      const key = `${Math.floor(building.cx / cell)}:${Math.floor(building.cz / cell)}`;
-      const bucket = grid.get(key);
-      if (bucket) bucket.push(building);
-      else grid.set(key, [building]);
-    }
-    const poles = [];
-    const basis = new THREE.Matrix4();
-    const at = new THREE.Vector3();
+  function locate(key) {
+    const cut = String(key).lastIndexOf(":");
+    if (cut < 0) return null;
+    const tile = key.slice(0, cut);
+    const index = Number(key.slice(cut + 1));
+    if (!Number.isFinite(index)) return null;
+    let mesh = null;
     scene.traverse((obj) => {
-      if (obj.userData?.role !== "pole" || !obj.isInstancedMesh) return;
-      for (let i = 0; i < obj.count; i += 1) {
-        obj.getMatrixAt(i, basis);
-        at.setFromMatrixPosition(basis);
-        poles.push(at.x, at.y, at.z);
-      }
+      if (!mesh && obj.userData?.facade && obj.userData.tile === tile) mesh = obj;
     });
-    const curves = [];
-    const linePos = [];
-    for (let i = 0; i < poles.length; i += 3) {
-      const x = poles[i];
-      const y = poles[i + 1];
-      const z = poles[i + 2];
-      let best = null;
-      let bestD = 70 * 70;
-      const gx = Math.floor(x / cell);
-      const gz = Math.floor(z / cell);
-      for (let dx = -2; dx <= 2; dx += 1) {
-        for (let dz = -2; dz <= 2; dz += 1) {
-          const list = grid.get(`${gx + dx}:${gz + dz}`);
-          if (!list) continue;
-          for (const building of list) {
-            const d = (building.cx - x) ** 2 + (building.cz - z) ** 2;
-            if (d < bestD && d > 9) {
-              bestD = d;
-              best = building;
-            }
-          }
-        }
+    if (!mesh) return null;
+    const box = buildingBox(mesh, index);
+    if (!box || box.index < 0) return null;
+    return {
+      key,
+      cx: box.x,
+      cz: box.z,
+      minX: box.x - box.hx,
+      maxX: box.x + box.hx,
+      minZ: box.z - box.hz,
+      maxZb: box.z + box.hz,
+      maxY: box.top,
+    };
+  }
+
+  function drawCollaborators(placed) {
+    clearLinks();
+    if (placed.length < 2) return;
+    for (let i = 0; i < placed.length; i += 1) {
+      for (let j = i + 1; j < placed.length; j += 1) {
+        const a = placed[i];
+        const b = placed[j];
+        if (a.key === b.key) continue;
+        const samples = sagSamples(wallToward(a, b.cx, b.cz), wallToward(b, a.cx, a.cz));
+        const glowMat = new THREE.MeshBasicMaterial({
+          color: 0xff3355,
+          transparent: true,
+          opacity: 0.95,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          toneMapped: false,
+        });
+        const glow = new THREE.Mesh(cableGeometry([samples], 0.42), glowMat);
+        glow.frustumCulled = false;
+        linkGroup.add(glow);
+        const pulse = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 10), glowMat.clone());
+        pulse.frustumCulled = false;
+        linkGroup.add(pulse);
+        const line = new THREE.Mesh(cableGeometry([samples], 0.08), cableMat);
+        line.frustumCulled = false;
+        linkGroup.add(line);
+        glows.push({ glow, pulse, samples });
       }
-      if (!best) continue;
-      const top = new THREE.Vector3(x, y + 9.55, z);
-      const attach = wallToward(best, x, z);
-      if (top.distanceTo(attach) > 72) continue;
-      const samples = sagSamples(top, attach);
-      curves.push(samples);
-      for (let k = 0; k < samples.length - 1; k += 1) {
-        linePos.push(samples[k].x, samples[k].y, samples[k].z, samples[k + 1].x, samples[k + 1].y, samples[k + 1].z);
-      }
     }
-    if (service) {
-      scene.remove(service);
-      service.traverse((obj) => {
-        if (obj.geometry) obj.geometry.dispose();
-      });
-    }
-    service = new THREE.Group();
-    if (curves.length) service.add(new THREE.Mesh(cableGeometry(curves, 0.04), cableMat));
-    if (linePos.length) {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.Float32BufferAttribute(linePos, 3));
-      service.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0x14161a })));
-    }
-    scene.add(service);
   }
 
   const jobs = [];
@@ -573,12 +485,13 @@ export async function mountTokyo(container, gate) {
     fly.room = false;
     fly.t = 0;
     fly.on = true;
-    if (markers[building]) markers[building].position.set(b.faceX, y, b.maxZ + 0.45);
   }
 
   function street() {
     focusReq = null;
     insideRoom = false;
+    sink.clear();
+    unlockOrbit();
     if (container) container.dataset.inside = "0";
     camera.near = 1;
     camera.updateProjectionMatrix();
@@ -650,6 +563,55 @@ export async function mountTokyo(container, gate) {
   let roomHold = null;
   let panCursor = null;
   let pinchGap = 0;
+  const sink = createSink(streamer);
+  const lockPoint = new THREE.Vector3();
+
+  function lockOnto(box) {
+    const lookY = box.base + Math.min((box.top - box.base) * 0.42, 48);
+    lockPoint.set(box.x, lookY, box.z);
+    controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
+    controls.touches.ONE = THREE.TOUCH.ROTATE;
+    controls.minPolarAngle = 0.02;
+    controls.maxPolarAngle = Math.PI * 0.49;
+    controls.minDistance = Math.max(6, Math.max(box.hx, box.hz) * 1.4);
+    controls.maxDistance = 900;
+  }
+
+  function unlockOrbit() {
+    controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+    controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
+    controls.touches.ONE = THREE.TOUCH.PAN;
+    controls.minPolarAngle = THREE.MathUtils.degToRad(6);
+    controls.maxPolarAngle = THREE.MathUtils.degToRad(92);
+    controls.minDistance = 1.4;
+    controls.maxDistance = 900;
+  }
+
+  function frameBuilding(box) {
+    const lookY = box.base + Math.min((box.top - box.base) * 0.42, 48);
+    const look = new THREE.Vector3(box.x, lookY, box.z);
+    const away = camera.position.clone().sub(look);
+    away.y = 0;
+    if (away.lengthSq() < 4) away.set(1, 0, 0.65);
+    away.normalize();
+    const dist = THREE.MathUtils.clamp(Math.max(box.hx, box.hz) * 3.4 + (box.top - box.base) * 0.9, 24, 180);
+    fly.fromCam.copy(camera.position);
+    fly.fromTarget.copy(controls.target);
+    fly.toTarget.copy(look);
+    fly.toCam.copy(look).addScaledVector(away, dist);
+    fly.toCam.y = look.y + dist * 0.38;
+    fly.room = false;
+    fly.t = 0;
+    fly.on = true;
+    insideRoom = false;
+    roomHold = null;
+    if (container) container.dataset.inside = "0";
+    camera.near = 1;
+    camera.updateProjectionMatrix();
+    lockOnto(box);
+    controls.target.copy(lockPoint);
+  }
 
   function clientPoint(event) {
     return { x: event.clientX ?? event.pageX ?? 0, y: event.clientY ?? event.pageY ?? 0 };
@@ -667,7 +629,7 @@ export async function mountTokyo(container, gate) {
   }
 
   function dragSelf(x, y) {
-    if (insideRoom || !panCursor) {
+    if (sink.hero.on || insideRoom || !panCursor) {
       panCursor = { x, y };
       return;
     }
@@ -743,52 +705,43 @@ export async function mountTokyo(container, gate) {
     dragSelf((a.x + b.x) / 2, (a.y + b.y) / 2);
   };
 
-  let pointerDown = null;
-  let activePointers = 0;
-  const onPointerDown = (event) => {
-    activePointers += 1;
-    if (event.button !== 0) return;
-    pointerDown = { x: event.clientX, y: event.clientY, n: activePointers };
-  };
-  const onPointerUp = (event) => {
-    activePointers = Math.max(0, activePointers - 1);
-    if (!pointerDown || event.button !== 0) return;
-    const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
-    const multi = pointerDown.n > 1 || activePointers > 0;
-    pointerDown = null;
-    if (moved > 6 || multi) return;
-    const rect = canvas.getBoundingClientRect();
-    const nx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    const ny = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    zoom.ray.setFromCamera(new THREE.Vector2(nx, ny), camera);
-    const hits = zoom.ray.intersectObjects(scene.children, true);
-    if (hits[0]?.object?.userData?.interior) return;
-    const hit = hits.find((item) => item.object.userData?.facade && item.face);
-    if (!hit) return;
-    const built = streamer.buildingAt(hit);
+  function enterWindow(hit) {
+    let built = hit.object.userData?.facade && hit.face ? streamer.buildingAt(hit) : null;
+    let outward = new THREE.Vector3();
+    if (built && hit.face) {
+      outward = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+    } else {
+      const found = sink.pick(hit.point.x, hit.point.z);
+      if (!found || found.key !== sink.hero.key) return;
+      const tile = found.key.slice(0, found.key.lastIndexOf(":"));
+      const index = Number(found.key.slice(found.key.lastIndexOf(":") + 1));
+      built = {
+        tile,
+        index,
+        height: Math.max(3, found.box.top - found.box.base),
+        base: found.box.base,
+        storeys: 0,
+      };
+      outward.copy(camera.position).sub(hit.point);
+      outward.y = 0;
+    }
     if (!built) return;
+    const key = `${built.tile}:${built.index}`;
+    if (key !== sink.hero.key) return;
     const floors = Math.max(1, built.storeys || Math.round((built.height || 1) / 3.2));
     const span = Math.max(built.height || 3, 2.4);
     const floorH = span / floors;
     const along = hit.point.y - (built.base || 0);
     const slot = Math.max(0, Math.min(floors - 1, Math.floor(along / floorH)));
-    const outward = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
     let floorY = (built.base || hit.point.y - 1.2) + slot * floorH;
-    if (outward.y > 0.45) {
+    if (outward.y > 0.45 || outward.lengthSq() < 0.01) {
       floorY = Math.max(built.base || 0, hit.point.y - floorH);
       outward.copy(camera.position).sub(hit.point);
       outward.y = 0;
-      if (outward.lengthSq() < 0.01) outward.set(0, 0, 1);
-      outward.normalize();
     }
-    const pick = {
-      key: `${built.tile}:${built.index}`,
-      slot,
-      x: hit.point.x,
-      y: hit.point.y,
-      z: hit.point.z,
-      floorY,
-    };
+    if (outward.lengthSq() < 0.01) outward.set(0, 0, 1);
+    outward.normalize();
+    const pick = { key, slot, x: hit.point.x, y: hit.point.y, z: hit.point.z, floorY };
     if (interior) {
       scene.remove(interior);
       disposeInterior(interior);
@@ -822,6 +775,71 @@ export async function mountTokyo(container, gate) {
     fly.on = true;
     focusReq = { building: -1, slot };
     container.__onWindow?.(pick);
+  }
+
+  let pointerDown = null;
+  let activePointers = 0;
+  const onPointerDown = (event) => {
+    activePointers += 1;
+    if (event.button !== 0) return;
+    pointerDown = { x: event.clientX, y: event.clientY, n: activePointers };
+  };
+  const onPointerUp = (event) => {
+    activePointers = Math.max(0, activePointers - 1);
+    if (!pointerDown || event.button !== 0) return;
+    const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
+    const multi = pointerDown.n > 1 || activePointers > 0;
+    pointerDown = null;
+    if (moved > 16 || multi) return;
+    const rect = canvas.getBoundingClientRect();
+    const nx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const ny = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    zoom.ray.setFromCamera(new THREE.Vector2(nx, ny), camera);
+    const hits = zoom.ray.intersectObjects(scene.children, true);
+    let building = null;
+    let ground = null;
+    for (let i = 0; i < hits.length; i += 1) {
+      const item = hits[i];
+      const obj = item.object;
+      if (!obj?.isMesh) continue;
+      if (obj.userData?.interior) return;
+      if (obj.userData?.ground) {
+        if (!ground) ground = item;
+        continue;
+      }
+      if (!building && (obj.userData?.facade || obj.userData?.roofPhoto)) building = item;
+    }
+    const take = (box, key) => {
+      if (!box || !key || key === sink.hero.key) return;
+      if (interior) {
+        scene.remove(interior);
+        disposeInterior(interior);
+        interior = null;
+      }
+      insideRoom = false;
+      roomHold = null;
+      sink.select(box, key);
+      frameBuilding(box);
+    };
+    if (building && (!ground || building.distance <= ground.distance + 0.8)) {
+      if (building.object.userData.facade && building.face) {
+        const built = streamer.buildingAt(building);
+        const box = built && buildingBox(building.object, built.index);
+        const key = built ? `${building.object.userData.tile}:${built.index}` : "";
+        if (box && key) {
+          if (key === sink.hero.key) enterWindow(building);
+          else take(box, key);
+          return;
+        }
+      }
+      const found = sink.pick(building.point.x, building.point.z);
+      if (found?.key === sink.hero.key) enterWindow(building);
+      else if (found) take(found.box, found.key);
+      return;
+    }
+    if (!ground || !sink.hero.on) return;
+    const found = sink.pick(ground.point.x, ground.point.z);
+    if (found) take(found.box, found.key);
   };
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointerup", onPointerUp);
@@ -856,6 +874,8 @@ export async function mountTokyo(container, gate) {
     if ((f || strafe || turn || rise) && !fly.on) {
       const dist = Math.max(1.4, camera.position.distanceTo(controls.target));
       const fast = keys.has("ShiftLeft") || keys.has("ShiftRight");
+      const locked = sink.hero.on && !insideRoom;
+      if (locked) controls.target.copy(lockPoint);
       if (turn && insideRoom) {
         const offset = new THREE.Vector3().subVectors(controls.target, camera.position);
         offset.applyAxisAngle(THREE.Object3D.DEFAULT_UP, -turn * (fast ? 2.1 : 1.15) * dt);
@@ -865,12 +885,14 @@ export async function mountTokyo(container, gate) {
         offset.applyAxisAngle(THREE.Object3D.DEFAULT_UP, turn * (fast ? 2.4 : 1.2) * dt);
         camera.position.copy(controls.target).add(offset);
       }
-      if (rise && !insideRoom) {
+      if (!locked && rise && !insideRoom) {
         const step = (fast ? 28 : 10) * dt * THREE.MathUtils.clamp(dist / 18, 0.6, 8);
         controls.target.y += rise * step;
         camera.position.y += rise * step;
       }
-      if (f || strafe) {
+      if (locked && f) {
+        zoom.pending = THREE.MathUtils.clamp(zoom.pending - f * 0.35, -2.4, 2.4);
+      } else if (!locked && (f || strafe)) {
         const fwd = new THREE.Vector3().subVectors(controls.target, camera.position).setY(0).normalize();
         const right = new THREE.Vector3().crossVectors(fwd, THREE.Object3D.DEFAULT_UP);
         const speed = insideRoom ? (fast ? 4.2 : 2.1) : THREE.MathUtils.clamp(dist * 1.2, 3.5, 320) * (fast ? 2.4 : 1);
@@ -889,8 +911,10 @@ export async function mountTokyo(container, gate) {
       const distNow = Math.max(0.4, offset.length());
       const distNext = THREE.MathUtils.clamp(distNow * Math.exp(stepAmt), controls.minDistance, controls.maxDistance);
       offset.multiplyScalar(distNext / distNow);
-      if (!insideRoom && stepAmt > 0) offset.y = THREE.MathUtils.lerp(offset.y, distNext * 0.46, 0.5);
-      if (!insideRoom && stepAmt < 0 && distNext < 22) offset.y = THREE.MathUtils.lerp(offset.y, 0.35, 0.4);
+      const locked = sink.hero.on && !insideRoom;
+      if (!locked && !insideRoom && stepAmt > 0) offset.y = THREE.MathUtils.lerp(offset.y, distNext * 0.46, 0.5);
+      if (!locked && !insideRoom && stepAmt < 0 && distNext < 22) offset.y = THREE.MathUtils.lerp(offset.y, 0.35, 0.4);
+      if (locked) controls.target.copy(lockPoint);
       camera.position.copy(controls.target).add(offset);
     }
 
@@ -917,7 +941,7 @@ export async function mountTokyo(container, gate) {
       }
       controls.target.copy(fly.poseTarget);
       camera.position.copy(fly.poseCam);
-    } else if (!focusReq && !insideRoom) {
+    } else if (!focusReq && !insideRoom && !sink.hero.on) {
       const dist = camera.position.distanceTo(controls.target);
       if (dist < 26) {
         const next = streamer.ground(controls.target.x, controls.target.z) + 1.6;
@@ -926,7 +950,14 @@ export async function mountTokyo(container, gate) {
       }
     }
     camera.lookAt(controls.target);
+    if (sink.hero.on && !insideRoom) controls.target.copy(lockPoint);
     controls.update();
+    if (sink.hero.on && !insideRoom && !fly.on) {
+      const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+      controls.target.copy(lockPoint);
+      camera.position.copy(lockPoint).add(offset);
+      camera.lookAt(lockPoint);
+    }
     if (fly.on) {
       controls.target.copy(fly.poseTarget);
       camera.position.copy(fly.poseCam);
@@ -948,10 +979,18 @@ export async function mountTokyo(container, gate) {
         if (container) container.dataset.inside = "0";
         camera.near = 1;
         camera.updateProjectionMatrix();
-        controls.minDistance = 1.4;
-        controls.maxDistance = 900;
-        controls.minPolarAngle = THREE.MathUtils.degToRad(6);
-        controls.maxPolarAngle = THREE.MathUtils.degToRad(92);
+        if (sink.hero.on) {
+          controls.target.copy(lockPoint);
+          controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+          controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
+          controls.touches.ONE = THREE.TOUCH.ROTATE;
+          controls.minPolarAngle = 0.02;
+          controls.maxPolarAngle = Math.PI * 0.49;
+          controls.minDistance = 6;
+          controls.maxDistance = 900;
+        } else {
+          unlockOrbit();
+        }
       } else {
         local.x = THREE.MathUtils.clamp(local.x, box.minX, box.maxX);
         local.y = THREE.MathUtils.clamp(local.y, box.minY, box.maxY);
@@ -962,11 +1001,13 @@ export async function mountTokyo(container, gate) {
         controls.target.copy(camera.position).add(look);
         if (shift.lengthSq() > 1e-8 && look.lengthSq() < 1e-6) controls.target.add(shift);
       }
-    } else if (!insideRoom) {
+    } else if (!insideRoom && !sink.hero.on) {
       const floor = streamer.ground(camera.position.x, camera.position.z) + 1.35;
       if (camera.position.y < floor) camera.position.y = floor;
     }
 
+    sink.hold(occupants.map((person) => person.key));
+    sink.tick(dt, camera);
     streamer.update(controls.target, camera.position);
     if (loading) {
       const size = manifest.tileSize;
@@ -978,27 +1019,19 @@ export async function mountTokyo(container, gate) {
         loader.style.opacity = "0";
       }
     }
-    if (!anchors.length && streamer.stats.loaded >= Math.min(12, manifest.tiles.length)) {
-      const picks = pickFive(catalog(scene));
-      if (picks) {
-        anchors = picks;
-        buildLinks(picks);
-        container.dataset.houses = String(picks.length);
-        if (focusReq) focus(focusReq.building, focusReq.slot);
+    const wantedLines = occupants.map((person) => person.key).filter(Boolean).sort().join("|");
+    if (wantedLines !== lineKey) {
+      const placed = occupants.map((person) => locate(person.key)).filter(Boolean);
+      const ready = occupants.length < 2 || placed.length === occupants.filter((person) => person.key).length;
+      if (ready) {
+        lineKey = wantedLines;
+        drawCollaborators(placed);
       }
     }
 
-    if (serviceTries < 3 && streamer.stats.loaded >= 10 && streamer.stats.loaded - serviceAt >= 8) {
-      rebuildService();
-      serviceAt = streamer.stats.loaded;
-      serviceTries += 1;
-    }
-
     props.update(dt);
-    if (birds.geometry.instanceCount) birds.userData.update(dt, controls.target, camera, streamer);
     signs.update();
     railways.userData.trains.update(dt, env.night);
-    if (traffic?.group.parent) traffic.update(dt, controls.target);
     if (streetTrees) {
       const close = camera.position.distanceTo(controls.target) < 900;
       streetTrees.near.visible = close;
@@ -1009,8 +1042,8 @@ export async function mountTokyo(container, gate) {
     env.update(dt);
     env.follow(controls.target, camera);
     lampLight.update(scene, controls.target, camera.position, env.night);
-    shared.uWet.value = env.night;
-    rain.update(shared.uWet.value, shared.uTime.value);
+    shared.uWet.value = 0;
+    snow.update(shared.uTime.value, camera.position);
     for (let i = 0; i < 5; i += 1) {
       const bot = shared.uBots.value[i];
       const house = anchors[i];
@@ -1025,28 +1058,11 @@ export async function mountTokyo(container, gate) {
       bot.set(house.cx, y, house.cz, job?.working ? 1 : 0);
     }
 
-    for (let i = 0; i < markers.length; i += 1) {
-      const mark = markers[i];
-      if (!mark) continue;
-      const on = Boolean(jobs[i]?.working);
-      mark.visible = on || focusReq?.building === i;
-      if (!on) continue;
-      mark.material.color.setHSL((t * 0.33 + i * 0.2) % 1, 0.75, 0.62);
-      mark.material.opacity = 0.55 + Math.sin(t * 3 + i) * 0.2;
-    }
     for (const item of glows) {
-      const on = Boolean(jobs[item.a]?.working || jobs[item.b]?.working);
-      item.glow.visible = on;
-      item.pulse.visible = on;
-      if (!on) {
-        item.line.material.color.set(0xffd28a);
-        continue;
-      }
-      const hue = (t * 0.33 + item.a * 0.2) % 1;
+      const along = (t % 5) / 5;
+      const hue = along;
       item.glow.material.color.setHSL(hue, 1, 0.55);
-      item.pulse.material.color.setHSL((hue + 0.33) % 1, 1, 0.6);
-      item.line.material.color.setHSL(hue, 0.85, 0.55);
-      const along = (t * 0.35 + item.a * 0.13) % 1;
+      item.pulse.material.color.setHSL((hue + 0.33) % 1, 1, 0.62);
       const step = Math.min(item.samples.length - 1, Math.floor(along * (item.samples.length - 1)));
       item.pulse.position.copy(item.samples[step]);
     }
@@ -1060,6 +1076,9 @@ export async function mountTokyo(container, gate) {
     setWork(next) {
       jobs.length = 0;
       if (Array.isArray(next)) jobs.push(...next);
+    },
+    setLines(people) {
+      occupants = Array.isArray(people) ? people.filter((person) => person?.key) : [];
     },
     destroy() {
       shutdown();

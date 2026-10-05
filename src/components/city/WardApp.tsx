@@ -36,6 +36,7 @@ type Err = { ok: false; error: string };
 function sceneFrom(city: CityView | null, beams: SceneModel["beams"], reduced: boolean, selected: SceneModel["selected"]): SceneModel {
   return {
     buildings: (city?.buildings ?? []).map((building) => ({
+      key: building.key,
       rooms: building.bots.map((bot) => ({
         slot: bot.slot,
         working: bot.working,
@@ -61,9 +62,9 @@ function ProviderButtons() {
     <button
       type="button"
       className="h-11 rounded-md bg-accent px-4 text-sm font-medium text-accent-fg"
-      onClick={() => signIn("grok-x", { callbackURL: back })}
+      onClick={() => signIn("grok-google", { callbackURL: back })}
     >
-      Authorize GrokBot
+      Continue with Google
     </button>
   );
 }
@@ -103,6 +104,7 @@ export function WardApp() {
   const [notice, setNotice] = useState("");
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [evictArmed, setEvictArmed] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [houseName, setHouseName] = useState("");
   const [joinCode, setJoinCode] = useState("");
@@ -477,11 +479,11 @@ export function WardApp() {
 
       {!isPending && !user ? (
         <section className="absolute right-4 bottom-4 left-4 z-20 rounded-xl border border-line bg-panel p-4 md:right-auto md:w-80">
-          <h2 className="font-display text-lg leading-tight font-medium">Authorize GrokBot</h2>
+          <h2 className="font-display text-lg leading-tight font-medium">Continue with Google</h2>
           <p className="mt-2 mb-4 text-sm text-muted">
             {typeof window !== "undefined" && new URLSearchParams(window.location.search).get("with")
-              ? "Your friend sent this building. Authorize GrokBot and it opens."
-              : "This opens Grok authorize. The bots on that account can take a room here. The same bot is not created again."}
+              ? "Your friend sent this building. Continue with Google and it opens."
+              : "Sign in with Google. This does not connect an X account. Sheets and Drive can open from here."}
           </p>
           <ProviderButtons />
         </section>
@@ -550,7 +552,7 @@ export function WardApp() {
             })()}
             {city?.role === "owner" && friendLink ? (
               <div className="flex flex-col gap-2">
-                <p className="text-sm text-muted">Send this. He opens it with Grok and the building is there.</p>
+                <p className="text-sm text-muted">Send this. He opens it with Google and the building is there.</p>
                 <p className="font-mono text-xs break-all text-fg">{friendLink}</p>
                 <button
                   type="button"
@@ -695,7 +697,7 @@ export function WardApp() {
                     ))}
                   </section>
                 ) : (
-                  <p className="text-sm text-muted">No project yet. Service lines stay dark until a bot is working.</p>
+                  <p className="text-sm text-muted">No project yet. A power line appears when two people each take a building.</p>
                 )}
                 <form className="flex flex-col gap-3" onSubmit={(event) => void onCreate(event)}>
                   <h2 className="text-sm font-medium">New project</h2>
@@ -734,7 +736,7 @@ export function WardApp() {
                   </button>
                 </div>
                 <p className="text-sm text-muted">
-                  Click a bot to fly to its window. The same bot can take a room in every project. While it works, the line into that building runs RGB. The line goes dark after five quiet seconds.
+                  Click a window to take that building. When someone else on this project takes a building too, a power line connects you. It runs RGB every five seconds until one of you moves out.
                 </p>
                 <ul className="flex flex-col gap-3">
                   {yours.bots.map((bot) => (

@@ -1,10 +1,16 @@
 # Lantern Line
 
-Night city. Claim a window and it locks to you. Send your friend the link from the card. He opens it with Grok and lands in the building.
+Blue-hour city. Snow falls and sits on roofs and streets. No rain, no cars, no birds, no stars.
+
+Sign in with Google only. There is no X sign-in.
+
+Click a building to lock the camera on it. A second click on a wall or roof opens that room. Click a different building to switch. The street does not unlock you.
+
+A power line appears only when two different people on the same project each have a building. An RGB pulse runs the cable every five seconds until one of them moves out.
 
 ```bash
 npm install
 npm run dev
 ```
 
-Then open http://127.0.0.1:8080
+The app listens on port 8080.

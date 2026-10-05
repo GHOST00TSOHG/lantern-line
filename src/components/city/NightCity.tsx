@@ -293,7 +293,7 @@ export function NightCity({
       powerPreference: "high-performance",
     });
     if (!renderer.getContext()) return;
-    renderer.setClearColor(0x070b14, 1);
+    renderer.setClearColor(0x121c38, 1);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
@@ -301,7 +301,8 @@ export function NightCity({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0x0b1220, 28, 62);
+    scene.background = new THREE.Color(0x121c38);
+    scene.fog = new THREE.Fog(0x1a2748, 28, 62);
     const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 120);
     const timer = new THREE.Timer();
     timer.connect(document);
@@ -335,73 +336,6 @@ export function NightCity({
     const sidewalkTex = concreteTex.clone();
     sidewalkTex.repeat.set(6, 1.2);
     sidewalkTex.needsUpdate = true;
-    const skyTex = loader.load("/city/sky.jpg");
-    skyTex.colorSpace = THREE.SRGBColorSpace;
-    const birdTex = [0, 1, 2, 3].map((i) => {
-      const meshes: THREE.Mesh[] = [];
-      const tex = loader.load(`/city/bird-${i}.png`, (loaded) => {
-        const image = loaded.image as { width?: number; height?: number };
-        const aspect = (image.width ?? 1) / Math.max(1, image.height ?? 1);
-        for (const mesh of meshes) {
-          const height = Math.abs(mesh.scale.y) || 0.7;
-          mesh.scale.x = Math.sign(mesh.scale.x || 1) * height * aspect;
-          mesh.scale.y = height;
-        }
-      });
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.userData.meshes = meshes;
-      return tex;
-    });
-
-    const sky = new THREE.Mesh(
-      new THREE.PlaneGeometry(96, 41),
-      new THREE.MeshBasicMaterial({ map: skyTex, depthWrite: false, fog: false }),
-    );
-    sky.position.set(0, 12.4, -26);
-    scene.add(sky);
-
-    const starPositions: number[] = [];
-    const starPhase: number[] = [];
-    const starSize: number[] = [];
-    for (let i = 0; i < 160; i += 1) {
-      starPositions.push((Math.random() - 0.5) * 70, 7.5 + Math.random() * 16, -24.2);
-      starPhase.push(Math.random() * Math.PI * 2);
-      starSize.push(6 + Math.random() * 16);
-    }
-    const starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute("position", new THREE.Float32BufferAttribute(starPositions, 3));
-    starGeo.setAttribute("aPhase", new THREE.Float32BufferAttribute(starPhase, 1));
-    starGeo.setAttribute("aSize", new THREE.Float32BufferAttribute(starSize, 1));
-    const starMat = new THREE.ShaderMaterial({
-      uniforms: { uTime: { value: 0 } },
-      transparent: true,
-      depthWrite: false,
-      fog: false,
-      vertexShader: `
-        attribute float aPhase;
-        attribute float aSize;
-        uniform float uTime;
-        varying float vTw;
-        void main() {
-          vTw = 0.55 + 0.45 * sin(uTime * 1.6 + aPhase);
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = aSize * vTw * (140.0 / max(1.0, -mv.z));
-          gl_Position = projectionMatrix * mv;
-        }
-      `,
-      fragmentShader: `
-        varying float vTw;
-        void main() {
-          vec2 p = gl_PointCoord - 0.5;
-          float d = length(p);
-          if (d > 0.5) discard;
-          float core = smoothstep(0.5, 0.05, d);
-          gl_FragColor = vec4(vec3(0.93, 0.96, 1.0) * (0.7 + vTw), core);
-        }
-      `,
-    });
-    const stars = new THREE.Points(starGeo, starMat);
-    scene.add(stars);
 
     const street = new THREE.Mesh(
       new THREE.PlaneGeometry(80, 70),
@@ -814,36 +748,6 @@ export function NightCity({
       }
     }
 
-    const birds = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
-      const tex = birdTex[i % birdTex.length]!;
-      const mat = new THREE.MeshBasicMaterial({
-        map: tex,
-        transparent: true,
-        depthWrite: false,
-        toneMapped: false,
-      });
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-      const dir = i % 3 === 0 ? -1 : 1;
-      const height = 1.25 + (i % 3) * 0.38;
-      mesh.scale.set(dir * height, height, 1);
-      (tex.userData.meshes as THREE.Mesh[]).push(mesh);
-      const image = tex.image as { width?: number; height?: number } | undefined;
-      if (image?.width && image.height) {
-        mesh.scale.x = Math.sign(mesh.scale.x || dir) * height * (image.width / image.height);
-      }
-      mesh.userData = {
-        offset: (i * 0.137) % 1,
-        speed: 0.018 + (i % 4) * 0.006,
-        y: 10.4 + (i % 5) * 0.85,
-        bob: 0.18 + (i % 3) * 0.08,
-        z: -7.5 - (i % 4) * 1.15,
-        dir,
-        phase: i * 1.3,
-      };
-      scene.add(mesh);
-      return mesh;
-    });
-
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const base = new THREE.Vector3();
@@ -914,7 +818,6 @@ export function NightCity({
       camera.position.x = base.x + Math.sin(t * 0.07) * 0.22 * drift;
       camera.position.y = base.y + Math.sin(t * 0.1) * 0.04 * drift;
       camera.lookAt(look);
-      starMat.uniforms.uTime!.value = current.reduced ? 0 : t;
 
       const activeColors: string[] = [];
       for (const room of rooms) {
@@ -1000,22 +903,6 @@ export function NightCity({
         (pulse.material as THREE.MeshBasicMaterial).color.set(color);
       });
 
-      for (const bird of birds) {
-        const data = bird.userData as {
-          offset: number;
-          speed: number;
-          y: number;
-          bob: number;
-          z: number;
-          dir: number;
-          phase: number;
-        };
-        const u = current.reduced ? data.offset : (data.offset + t * data.speed) % 1;
-        const x = data.dir > 0 ? -16 + u * 34 : 16 - u * 34;
-        bird.position.set(x, data.y + Math.sin(u * Math.PI * 2 + data.phase) * data.bob, data.z);
-        bird.rotation.z = Math.cos(u * Math.PI * 2 + data.phase) * 0.22 * data.dir;
-      }
-
       const live = current.beams[current.beams.length - 1];
       const age = live ? (performance.now() - live.born) / 1000 : 99;
       const showBeam = Boolean(live && age >= 0 && age < 2.8);
@@ -1065,12 +952,8 @@ export function NightCity({
       asphaltTex.dispose();
       glassTex.dispose();
       sidewalkTex.dispose();
-      skyTex.dispose();
-      birdTex.forEach((tex) => tex.dispose());
       glowTex.dispose();
       winTex.dispose();
-      starGeo.dispose();
-      starMat.dispose();
       renderer.dispose();
     };
   }, []);

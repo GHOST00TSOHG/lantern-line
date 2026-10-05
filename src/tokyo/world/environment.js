@@ -8,8 +8,8 @@ const SHADOW_SIZE = 4096;
 
 const DAY = { hemi: 0.55, sun: 3.4, sunColor: new THREE.Color(0xfff0dc), env: 1.0, exposure: 0.82, bloom: 0.12 };
 const NIGHT = {
-  hemi: 0.95, sun: 0.62, sunColor: new THREE.Color(0xc5d2f6),
-  env: 1.1, exposure: 1.35, bloom: 0.55,
+  hemi: 0.95, sun: 0.9, sunColor: new THREE.Color(0x9fb4ff),
+  env: 0.45, exposure: 1.05, bloom: 0.4,
 };
 
 const SUNSET = new THREE.Color(0xff9a52);
@@ -39,6 +39,7 @@ export class Environment {
 
     this.hemi = new THREE.HemisphereLight(0xfff4e6, 0x8a8172);
     scene.add(this.hemi);
+    scene.fog = new THREE.FogExp2(0x31456f, 0.00022);
 
     this.sun = new THREE.DirectionalLight();
     this.sun.castShadow = true;
@@ -112,6 +113,8 @@ export class Environment {
     const t = this.dark, lerp = (a, b) => a + (b - a) * t;
     this.sky.material.uniforms.uNight.value = t;
     this.hemi.intensity = lerp(DAY.hemi, NIGHT.hemi);
+    this.hemi.color.setHex(0xfff4e6).lerp(new THREE.Color(0x6e86c9), t);
+    this.hemi.groundColor.setHex(0x8a8172).lerp(new THREE.Color(0x1a1422), t);
     this.sun.intensity = DAY.sun * this.daylight + NIGHT.sun * this.moonlight;
     this.sun.color.copy(DAY.sunColor).lerp(SUNSET, this.warmth).lerp(NIGHT.sunColor, this.moonlight);
     this.scene.environmentIntensity = lerp(DAY.env, NIGHT.env); // (the map itself darkens with the sky)
